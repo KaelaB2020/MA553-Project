@@ -18,7 +18,7 @@ int main(int argc, char **args){
 
   //Grid variables.
   PetscInt i, j, w, l;//Looping variables
-  PetscInt n1;//Storage variables for the LI of the TL and TR nodes of element_ji;
+  PetscInt n1,n2;//Storage variables for the LI of the TL and TR nodes of element_ji;
   PetscInt edof[8];//Array to store LI of DOF's for the global stiffness matrix.
   PetscInt LIFy[1] = {1};//LI of the dof where Fy is to act.
 
@@ -82,7 +82,8 @@ int main(int argc, char **args){
 
       //LI of nodes in the mesh
       n1 = j + i*ny;//LI of TL corner of element_ij.
-
+      n2 = n1 + ny;
+      /*
       //LI of the corresponding dof's of element_ij in displacement vector U.
       edof[0] = 2*n1;//LI of X-displacement of TL corner in U.
       edof[1] = edof[0] + 1;//LI of Y-displacement of TL corner in U.
@@ -92,6 +93,15 @@ int main(int argc, char **args){
       edof[5] = edof[4] + 1;//LI Y-displacement of BL corner in U.
       edof[6] = edof[5] + 1;//LI X-displacement of BR corner in U.
       edof[7] = edof[6] + 1;//LI Y-displacement of BR corner in U.
+      */
+      edof[0] = 2*n1;//LI of X-displacement of TL corner in U.
+      edof[1] = 2*n1 + 1;//LI of Y-displacement of TL corner in U.
+      edof[2] = 2*n2;//LI X-displacement of TR corner in U.
+      edof[3] = 2*n2 + 1;//LI Y-displacement of TR corner in U.
+      edof[4] = 2*n2 + 2;//LI X-displacement of BL corner in U.
+      edof[5] = 2*n2 + 3;//LI Y-displacement of BL corner in U.
+      edof[6] = 2*n1 + 2;//LI X-displacement of BR corner in U.
+      edof[7] = 2*n1 + 3;//LI Y-displacement of BR corner in U.
 
       //This is the subset step that Sigmund uses in MATLAB.
       for(w=0;w<8;w++){//Scan rows.
@@ -108,7 +118,7 @@ int main(int argc, char **args){
   PetscInt last = size-1;
   //Cleanup steps - X-displacements clamped on left edge.
   for(w=0;w<ny;w++){//Scan along the y-nodes
-    n1 = w*2*ny;//"n1" now stores the row index of the clamped X-nodes.
+    n1 = w*2;//"n1" now stores the row index of the clamped X-nodes.
     for(l=0;l<size;l++){//Scan along the K matrix
       ierr = MatSetValues(K,1,&n1,1,&l,&zero,INSERT_VALUES); CHKERRQ(ierr);//Clears redundant coefficients.
     }
