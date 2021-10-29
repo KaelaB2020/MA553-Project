@@ -1,0 +1,1005 @@
+/*
+	KAELA BARRETT
+	3D MULTI MATERIAL OPTIMIZATION
+	MPI MMA & HELMHOLTZ PDE FILTERING
+	DOUBLE FILTERING & PROJECTION W/ EXTERNAL DOMAIN EXTENSION
+	MINIMIZING COMPLIANCE S.T. VOLUME & STRESS CONSTRAINTS
+
+	DETERMINISTIC APPROACH
+
+	EMBRY-RIDDLE AERONAUTICAL UNIVERSITY
+	2021
+*/
+// TO RUN CODE IN TERMINAL
+	// ff-mpirun -np 6 TopOpt3D_MultiNEW_Stress_Deterministic.edp -ne -v 0
+
+	mpiComm Comm(mpiCommWorld, 0, 0);
+	load "PETSc"
+	load "MMA-PETSc-FreeFem" // mpi MMA
+	load "msh3"
+	load "Element_P1dc1"
+
+	macro dimension()3 // 3D
+
+	include "macro_ddm.idp" // NEEDED FOR DOMAIN DECOMPOSITION
+
+// MATERIAL PROPERTIES
+	real Emax = 226.735e9;
+	real Emin = 153.845e9;
+	real Bmin = 2.891e5;
+	real Bmax = 3.773e6;
+	real etaEB = 0.23;
+	real betaEB = 0.1;
+	real nu = 0.285;
+
+// OPTIMIZATION PARAMETERS
+	real p = 10.0; 		// P-NORM COEFF
+	//real Pks = 10.0; 	// KREISSELMEIER-STEINHAUSER FUNCTION PARAMETER
+	//real kv = 0.0;   	// VOLUME FRACTION WEIGHTING FACTOR
+	real Vup = 0.14; 	// VOLUME FRACTION UPPER BOUND
+	real Vlow = 0.13; 	// VOLUME FRACTION LOWER BOUND
+
+// THERMAL LOAD
+	real dTemp = 25.0;
+
+// INTERPOLATION PARAMETERS - (1 - SIMP, 2 - RAMP)
+	int method = 1;
+	real penal = 3.0;
+	real penalS = 0.25;
+	real q0E1 = 6.0;
+	real q0B1 = 3.0;
+	real q0F = -0.7;
+	real qE1, qB1, qF;
+
+// BOUNDARY & MESH
+	// Boundary Labels:
+	// 	1 = dirichlet boundary cond.
+	// 	2 = zero neumann cond.
+	// 	3 = neumann boundary cond.
+	// 	4 = shared boundary
+	// Regions:
+	// 	1 = designable region
+	// 	2 = non-designable region (solid steel)
+	//	3 = domain extension (void)
+
+	// L-SHAPE W/ DOMAIN EXTENSION
+	func traction = -7.0e6; // TRACTION
+	real Rmax, Rmin = 0.001;
+	int[int] L1 = [2,4,1,2,2,2];
+	mesh3 Omega1 = cube(0.005/Rmin,0.105/Rmin,0.028/Rmin, [x*0.005, y*0.105, z*0.028], label=L1, region=3);
+
+	int[int] L2 = [2,4,4,4,2,2];
+	mesh3 Omega2 = cube(0.1/Rmin,0.005/Rmin,0.028/Rmin, [x*0.1+0.005, y*0.005, z*0.028], label=L2, region=3);
+
+	int[int] L3 = [2,2,2,4,2,2];
+	mesh3 Omega3 = cube(0.005/Rmin,0.06/Rmin,0.028/Rmin, [x*0.005+0.105, y*0.06, z*0.028], label=L3, region=3);
+
+	int[int] L4 = [4,4,2,4,2,2];
+	mesh3 Omega4 = cube(0.045/Rmin,0.005/Rmin,0.028/Rmin, [x*0.045+0.06, y*0.005+0.055, z*0.028], label=L4, region=3);
+
+	int[int] L5 = [4,2,1,4,2,2];
+	mesh3 Omega5 = cube(0.005/Rmin,0.05/Rmin,0.028/Rmin, [x*0.005+0.055, y*0.05+0.055, z*0.028], label=L5, region=3);
+
+	int[int] L6 = [4,4,1,4,4,4];
+	mesh3 Omega6 = cube(0.05/Rmin,0.1/Rmin,0.018/Rmin, [x*0.05+0.005, y*0.1+0.005, z*0.018+0.005], label=L6, region=1);
+
+	int[int] L7 = [4,4,4,4,4,4];
+	mesh3 Omega7 = cube(0.03/Rmin,0.05/Rmin,0.018/Rmin, [x*0.03+0.055, y*0.05+0.005, z*0.018+0.005], label=L7, region=1);
+
+	int[int] L8 = [4,4,4,4,4,4];
+	mesh3 Omega8 = cube(0.02/Rmin,0.015/Rmin,0.018/Rmin, [x*0.02+0.085, y*0.015+0.005, z*0.018+0.005], label=L8, region=1);
+
+	int[int] L9 = [4,4,4,4,4,4];
+	mesh3 Omega9 = cube(0.02/Rmin,0.015/Rmin,0.018/Rmin, [x*0.02+0.085, y*0.015+0.04, z*0.018+0.005], label=L9, region=1);
+
+	int[int] L10 = [4,4,1,4,2,4];
+	mesh3 Omega10 = cube(0.05/Rmin,0.1/Rmin,0.005/Rmin, [x*0.05+0.005, y*0.1+0.005, z*0.005], label=L10, region=3);
+
+	int[int] L11 = [4,4,4,4,2,4];
+	mesh3 Omega11 = cube(0.03/Rmin,0.05/Rmin,0.005/Rmin, [x*0.03+0.055, y*0.05+0.005, z*0.005], label=L11, region=3);
+
+	int[int] L12 = [4,4,4,4,2,4];
+	mesh3 Omega12 = cube(0.02/Rmin,0.015/Rmin,0.005/Rmin, [x*0.02+0.085, y*0.015+0.005, z*0.005], label=L12, region=3);
+
+	int[int] L13 = [4,4,4,4,2,4];
+	mesh3 Omega13 = cube(0.02/Rmin,0.015/Rmin,0.005/Rmin, [x*0.02+0.085, y*0.015+0.04, z*0.005], label=L13, region=3);
+
+	int[int] L14 = [4,4,1,4,4,2];
+	mesh3 Omega14 = cube(0.05/Rmin,0.1/Rmin,0.005/Rmin, [x*0.05+0.005, y*0.1+0.005, z*0.005+0.023], label=L14, region=3);
+
+	int[int] L15 = [4,4,4,4,4,2];
+	mesh3 Omega15 = cube(0.03/Rmin,0.05/Rmin,0.005/Rmin, [x*0.03+0.055, y*0.05+0.005, z*0.005+0.023], label=L15, region=3);
+
+	int[int] L16 = [4,4,4,4,4,2];
+	mesh3 Omega16 = cube(0.02/Rmin,0.015/Rmin,0.005/Rmin, [x*0.02+0.085, y*0.015+0.005, z*0.005+0.023], label=L16, region=3);
+
+	int[int] L17 = [4,4,4,4,4,2];
+	mesh3 Omega17 = cube(0.02/Rmin,0.015/Rmin,0.005/Rmin, [x*0.02+0.085, y*0.015+0.04, z*0.005+0.023], label=L17, region=3);
+
+	// SOLID STEEL WITH HOLE FOR LOADING
+	border ss1(t=0.0, 0.02){x=0.085; y=0.04-t; label=4;}
+	border ss2(t=0.0, 0.02){x=0.085+t; y=0.02; label=4;}
+	border ss3(t=0.0, 0.02){x=0.105; y=0.02+t; label=4;}
+	border ss4(t=0.0, 0.02){x=0.105-t; y=0.04; label=4;}
+	border ss5(t=0.0, 2*pi){x=0.095+0.0095*cos(t); y=0.03+0.0095*sin(t); label=4;}
+
+	border hole1(t=0.0, 2*pi){x=0.095+0.0095*cos(t); y=0.03+0.0095*sin(t); label=4;}
+	border hole2(t=0.0, 2*pi){x=0.095+0.0035*cos(t); y=0.03+0.0035*sin(t); label=3;}
+
+	mesh Th2 = buildmesh(ss1(0.02/Rmin)+ss2(0.02/Rmin)+ss3(0.02/Rmin)+ss4(0.02/Rmin)+ss5(-50), fixedborder=true);
+	mesh Th3 = buildmesh(hole1(50)+hole2(-50), fixedborder=true);
+
+	// COMBINE MESH GEOMETRY
+	func zmin = 0.005;
+	func zmid1 = 0.011;
+	func zmid2 = 0.017;
+	func zmax = 0.023;
+	int[int] reg1 = [0,1];
+	int[int] reg2 = [0,2];
+
+	mesh3 Omega18 = buildlayers(Th2, 0.006/Rmin, zbound=[zmin,zmid1], region=reg1);
+	mesh3 Omega19 = buildlayers(Th3, 0.006/Rmin, zbound=[zmin,zmid1], region=reg1);
+	mesh3 Omega20 = buildlayers(Th2, 0.006/Rmin, zbound=[zmid1,zmid2], region=reg1);
+	mesh3 Omega21 = buildlayers(Th3, 0.006/Rmin, zbound=[zmid1,zmid2], region=reg2);
+	mesh3 Omega22 = buildlayers(Th2, 0.006/Rmin, zbound=[zmid2,zmax], region=reg1);
+	mesh3 Omega23 = buildlayers(Th3, 0.006/Rmin, zbound=[zmid2,zmax], region=reg1);
+
+	mesh3 Omega = Omega1 + Omega2 + Omega3 + Omega4 + Omega5 + Omega6 + Omega7 + Omega8 +
+	              Omega9 + Omega10 + Omega11 + Omega12 + Omega13 + Omega14 + Omega15 + Omega16 +
+	              Omega17 + Omega18 + Omega19 + Omega20 + Omega21 + Omega22 + Omega23;
+	//plot(Omega);
+
+// DOMAIN DECOMPOSITION & FESPACE
+	mesh3 OmegaGlobal = Omega; // SAVE COPY OF 3D MESH
+
+	real TotVol = OmegaGlobal.measure; // VOLUME OF GLOBAL MESH
+	int NbTriangles = OmegaGlobal.nt;
+	int Nbvertices = OmegaGlobal.nv;
+
+	fespace Gamma0G(OmegaGlobal, P0); // GLOBAL FESPACE
+	fespace Gamma1G(OmegaGlobal, P1);
+
+	// BUILD LOCAL MESH FOR PETSc
+		int[int] globN;
+		macro OmegaN2O()globN // TELLS 'buildDmesh' TO KEEP LOCAL TO GLOBAL CORRESPONDENCE
+		buildDmesh(Omega)
+		if (mpirank == 0) cout << "Building local mesh... " << endl;
+
+		Mat A0, Afilt1, Afilt2;
+		Mat AFEA, ALambda;
+		{
+			macro def(i)[i, i#y, i#z] //
+			macro init(i)[i, i, i] //
+			createMat(Omega, AFEA, [P1,P1,P1]);
+			createMat(Omega, ALambda, [P1,P1,P1]);
+		}
+		{
+			macro def(i) i //
+			macro init(i) i //
+			createMat(Omega, A0, P0);
+			createMat(Omega, Afilt1, P1);
+			createMat(Omega, Afilt2, P1);
+		}
+
+	fespace Gamma0(Omega, P0);
+	fespace Gamma1(Omega, P1);
+	fespace Gamma11(Omega, [P1,P1]);
+	fespace Gamma111(Omega, [P1,P1,P1]);
+
+	Gamma0 MeshVol, E, B, CE, rho, rho1, rho2, rhoPhyss, rhoPhyss2, FI, dM1, dM2, dSE1, dSE2, dPnorm1, dPnorm2;
+	Gamma0 rho1Tilde1, rho2Tilde1, rho1Tilde2, rho2Tilde2;
+	Gamma0 rhoPhys1O, rhoPhys2O;
+	Gamma0 eta1EO, eta1BO, etaFO, EOO, BOO, EbarO, BbarO, AlphaIn, Alpha;
+	Gamma0 E1OO, E2OO, B1OO, B2OO;
+	Gamma0 stressAO, VMstressOO;
+	Gamma0 stressXXOO, stressYYOO, stressZZOO, stressXYOO, stressYZOO, stressZXOO;
+	Gamma0 RelaxedStressOO, FailureIndexOO, FailureGroupOO;
+	Gamma0 deta1EO, deta1BO, detaFO, dEbarO, dBbarO, dstressAO, dAlphaIn, dAlpha;
+	Gamma0 dSE1OO, dSE2OO, dM1OO, dM2OO, dPNorm1OO, dPNorm2OO;
+	Gamma0 exOO, eyOO, ezOO, ezyOO, exzOO, exyOO;
+	Gamma0 lxOO, lyOO, lzOO, lzyOO, lxzOO, lxyOO;
+	Gamma1 ux, uy, uz, desV1, desV2, dse1, dse2, dm1, dm2, dpnorm1, dpnorm2;
+	Gamma1 lambdax, lambday, lambdaz;
+
+	int[int] loc2globP0 = restrict(Gamma0, Gamma0G, globN); // RESTRICTION ARRAY FOR LOCAL TO GLOBAL
+
+	real r, locVol, VolO, SEloc, SEOO, f2;
+	real valN = 1.0/TotVol;
+	real locPN, PNormOO, PNormOldOO, PNormScaledOO;
+	real maxFI, MaxFailureOO, MaxFailureOldOO;
+	real sOO, sOld1OO, sOld2OO, sOld3OO;
+	sOO = 1.0;	sOld1OO = sOO;	sOld2OO = sOO;	sOld3OO = sOO;
+
+// DETERMINE VOLUME OF EACH ELEMENT ON MESH
+	varf varea (unused, chiK) = int3d(Omega)(chiK);
+	MeshVol[] = varea(0, Gamma0);
+
+// BUILD LOCAL NON-OVERLAPPING MESH (FOR MMA)
+	if (mpirank == 0) cout << "Building non-overlapping mesh... " << endl;
+	mesh3 OmegaNo, OmegaNoG = OmegaGlobal;
+	fespace Gamma0NoG(OmegaNoG, P0);
+	Gamma0NoG part;
+	createPartition(OmegaNoG, part[], P0)
+	int[int] n2o;
+	OmegaNo = trunc(OmegaNoG, abs(part-1.0) < 1e-1, new2old=n2o); // NON-OVERLAPPING MESH
+
+	fespace Gamma0No(OmegaNo, P0);
+	fespace Gamma1No(OmegaNo, P1);
+
+	Gamma0No df0dx1No, df0dx2No;
+	Gamma0No dfdx1NoOO, dfdx1NoVup, dfdx1NoVlow;
+	Gamma0No dfdx2NoOO, dfdx2NoVup, dfdx2NoVlow;
+	Gamma0No rho1No, rho2No, rho1Old1No, rho2Old1No, rho1Old2No, rho2Old2No;
+
+	int[int] overlapRestP0 = restrict(Gamma0No, Gamma0, n2o); // RESTRICTION ARRAY FOR NON-OVERLAP TO LOCAL OVERLAP
+
+	// BUILD CONNECTIVITY MATRIX & DETERMINE MIN ELEMENT SIZE
+	if (mpirank==0){
+		int[int,int] Pconn(NbTriangles,4),PWconn(NbTriangles,4);
+		matrix Ihs(4*NbTriangles,Nbvertices);
+		// Omega(i) return the vextex i of Omega
+		// Omega[k] return the triangle k of Omega
+		// Omega[k][i] return the vertex i of the triangle k of Omega
+		for (int i = 0; i < NbTriangles; i++){
+			for (int j = 0; j < 4; j++){
+			    Pconn(i,j) = OmegaGlobal[i][j];
+			    PWconn(i,j) = Gamma0G(i,j);
+			}
+		}
+		Gamma1G XX,YY,ZZ;
+		XX = x;
+		YY = y;
+		ZZ = z;
+
+		Rmax=0;	Rmin=0;
+
+		real[int] ArrayMax(6),ArrayMin(6);
+		Gamma0G X0,X1,X2,X3,Y0,Y1,Y2,Y3,Z0,Z1,Z2,Z3;
+		Gamma0G Len0,Len1,Len2,Len3,Len4,Len5;
+		X0[] = XX[](Pconn(:,0));
+		X1[] = XX[](Pconn(:,1));
+		X2[] = XX[](Pconn(:,2));
+		X3[] = XX[](Pconn(:,3));
+		Y0[] = YY[](Pconn(:,0));
+		Y1[] = YY[](Pconn(:,1));
+		Y2[] = YY[](Pconn(:,2));
+		Y3[] = YY[](Pconn(:,3));
+		Z0[] = ZZ[](Pconn(:,0));
+		Z1[] = ZZ[](Pconn(:,1));
+		Z2[] = ZZ[](Pconn(:,2));
+		Z3[] = ZZ[](Pconn(:,3));
+		// first edges 0-1
+		Len0 = ((X0-X1)^2.+(Y0-Y1)^2.+(Z0-Z1)^2.)^(0.5);
+		ArrayMax(0) = Len0[].max;ArrayMin(0) = Len0[].min;
+		// second edges 0-2
+		Len1 = ((X0-X2)^2.+(Y0-Y2)^2.+(Z0-Z2)^2.)^(0.5);
+		ArrayMax(1) = Len1[].max;ArrayMin(1) = Len1[].min;
+		// third edges 0-3
+		Len2 = ((X0-X3)^2.+(Y0-Y3)^2.+(Z0-Z3)^2.)^(0.5);
+		ArrayMax(2) = Len2[].max;ArrayMin(2) = Len2[].min;
+		// fourth edges 1-3
+		Len3 = ((X1-X3)^2.+(Y1-Y3)^2.+(Z1-Z3)^2.)^(0.5);
+		ArrayMax(3) = Len3[].max;ArrayMin(3) = Len3[].min;
+		// fifth edges 1-2
+		Len4 = ((X1-X2)^2.+(Y1-Y2)^2.+(Z1-Z2)^2.)^(0.5);
+		ArrayMax(4) = Len4[].max;ArrayMin(4) = Len4[].min;
+		// sixth edges 3-2
+		Len5 = ((X3-X2)^2.+(Y3-Y2)^2.+(Z3-Z2)^2.)^(0.5);
+		ArrayMax(5) = Len5[].max;ArrayMin(5) = Len5[].min;
+		Rmax = ArrayMax.max;Rmin = ArrayMin.min;
+
+		cout << "--------------------" << endl;
+		cout << "Number of elements = " << NbTriangles << endl;
+		cout << "Max of meshsize: is " << Rmax << endl;
+		cout << "Min of meshsize: is " << Rmin << endl;
+		cout << "Total Volume = " << TotVol << endl;
+		cout << "--------------------" << endl; cout << endl;
+	}
+		broadcast(processor(0), Rmax);
+		broadcast(processor(0), Rmin);
+
+	// CREATE FILTERING INTERPOLATION MATRIX
+	 	fespace Gamma1dc(Omega,P1dc);
+		Gamma1dc Rhdc,etadc,DCbx,DCby,DCbz;
+		varf Tfilterdc(unused,etadc)=int3d(Omega)(etadc) ;
+
+		Rhdc[]=Tfilterdc(0,Gamma1dc);
+		int nbelement = Omega.nt;
+		int nbvertices=Omega.nv;
+
+		matrix T(nbvertices,nbelement);
+		matrix TnoA(nbvertices,nbelement);
+		matrix TT(nbelement,nbvertices);
+
+		for (int e = 0; e < nbelement; e++) {
+			// ---------- [T] ----------
+			T(int(Omega[e][0]),e)=Rhdc[][int(Gamma1dc(e,0))];
+			T(int(Omega[e][1]),e)=Rhdc[][int(Gamma1dc(e,1))];
+			T(int(Omega[e][2]),e)=Rhdc[][int(Gamma1dc(e,2))];
+			T(int(Omega[e][3]),e)=Rhdc[][int(Gamma1dc(e,3))];
+
+			TnoA(int(Omega[e][0]),e)=(1/MeshVol[][e])*Rhdc[][int(Gamma1dc(e,0))];
+			TnoA(int(Omega[e][1]),e)=(1/MeshVol[][e])*Rhdc[][int(Gamma1dc(e,1))];
+			TnoA(int(Omega[e][2]),e)=(1/MeshVol[][e])*Rhdc[][int(Gamma1dc(e,2))];
+			TnoA(int(Omega[e][3]),e)=(1/MeshVol[][e])*Rhdc[][int(Gamma1dc(e,3))];
+
+			TT(e,int(Omega[e][0]))=Rhdc[][int(Gamma1dc(e,0))];
+			TT(e,int(Omega[e][1]))=Rhdc[][int(Gamma1dc(e,1))];
+			TT(e,int(Omega[e][2]))=Rhdc[][int(Gamma1dc(e,2))];
+			TT(e,int(Omega[e][3]))=Rhdc[][int(Gamma1dc(e,3))];
+		}
+
+// ASSIGN INITIAL DENSITIES
+	rho1 = 0.5; 			rho2 = 0.5;
+	rho1No = 0.5;			rho2No = 0.5;
+	// VOID DOMAIN EXTENSION
+		rho1 =  rho1 - (region == 3)*(rho1 - 1e-3);
+		rho1No =  rho1No - (region == 3)*(rho1No - 1e-3);
+	// SET NON-DESIGNABLE REGIONS - MAT 1
+		rho1 =  rho1 - (region == 2)*(rho1 - 1.0);
+		rho1No =  rho1No - (region == 2)*(rho1No - 1.0);
+		rho2 =  rho2 - (region == 2)*(rho2 - 1.0);
+		rho2No =  rho2No - (region == 2)*(rho2No - 1.0);
+
+//medit("dens", Omega, rho1);
+
+// MACROS FOR OPTIMIZATION
+	macro def3(i) [i, i#y, i#z] //
+	macro def(i) i //
+
+	macro Epsilon(ex,ey,ez,ezy,exz,exy) [ex,ey,ez,ezy,exz,exy] //
+
+	macro epsilon(u) [dx(u),dy(u#y),dz(u#z),(dz(u#y)+dy(u#z)),(dz(u)+dx(u#z)),(dy(u)+dx(u#y))] //
+
+	macro C(E,nu) [ [(E*(1-nu))/((1+nu)*(1-2*nu)), 	(E*nu)/((1+nu)*(1-2*nu)), 		(E*nu)/((1+nu)*(1-2*nu)), 		0.0, 0.0, 0.0],
+									[(E*nu)/((1+nu)*(1-2*nu)), 		(E*(1-nu))/((1+nu)*(1-2*nu)), 	(E*nu)/((1+nu)*(1-2*nu)), 		0.0, 0.0, 0.0],
+									[(E*nu)/((1+nu)*(1-2*nu)), 		(E*nu)/((1+nu)*(1-2*nu)), 		(E*(1-nu))/((1+nu)*(1-2*nu)), 	0.0, 0.0, 0.0],
+									[0.0, 0.0, 0.0, E/(2*(1+nu)), 0.0, 0.0],
+									[0.0, 0.0, 0.0, 0.0, E/(2*(1+nu)), 0.0],
+									[0.0, 0.0, 0.0, 0.0, 0.0, E/(2*(1+nu))]
+								] // 3D
+
+	macro phi [1.0, 1.0, 1.0, 0.0, 0.0, 0.0] // FOR 3D
+
+	macro dVMdSig(stressXX,stressYY,stressZZ,stressYZ,stressZX,stressXY)
+			0.5*(((stressXXOO - stressYYOO)^2.0 + (stressYYOO - stressZZOO)^2.0 + (stressZZOO - stressXXOO)^2.0 + 6*(stressXYOO^2.0 + stressYZOO^2.0 + stressZXOO^2.0))/2.0 + (1.0e-4)^2.0)^(-0.5) *
+			[	((stressXX - stressYY) - (stressZZ - stressXX)),
+				((stressYY - stressZZ) - (stressXX - stressYY)),
+				((stressZZ - stressXX) - (stressYY - stressZZ)),
+				6.0*stressYZ,
+				6.0*stressZX,
+				6.0*stressXY ] // DERIVATIVE OF VM STRESS WRT SIGMA
+
+// HELMHOLTZ FILTERS
+	varf HelmholtzRho(def(rhoFilt), def(vv))
+		= int3d(Omega)(r^2.0 * (dx(rhoFilt)*dx(vv) + dy(rhoFilt)*dy(vv) + dz(rhoFilt)*dz(vv)))
+		+ int3d(Omega)(rhoFilt*vv)
+		- int3d(Omega)(rho*vv);
+
+// FINITE ELEMENT PROBLEM FOR PETSc
+	varf FE(def3(u), def3(v))
+		= int3d(Omega)(epsilon(u)' * C(E,nu) * epsilon(v))
+		- int2d(Omega, 3)(traction*vy)
+		- int3d(Omega)(phi' * C(B,nu) * epsilon(v) * dTemp)
+		+ on(1, uy=0.0);
+
+// LAMBDA ADJOINT FOR PNORM SENSITIVITY
+	varf PNormLambdaOO(def3(lambda), def3(v))
+		= int3d(Omega)(epsilon(lambda)' * C(E,nu) * epsilon(v))
+		+ int3d(Omega)((valN/stressAO) * PNormOO^(1.0-p) * FailureIndexOO^(p-1.0) * etaFO * dVMdSig(stressXXOO,stressYYOO,stressZZOO,stressYZOO,stressZXOO,stressXYOO)' * C(EbarO,nu) * epsilon(v))
+		+ on(1, lambday=0.0); //
+
+// SET-UP MMA
+	Gamma0No m1minmoveNo, m1maxmoveNo, m2minmoveNo, m2maxmoveNo, osc1t, osc2t, osc1f, osc2f, move1, move2;
+	int m = 3; // NUMBER OF CONSTRAINT
+	int DperE = 2; // NUMBER OF DESIGN VARIABLE PER ELEMENT
+	int n = DperE*rho1No.n; // NUMBER OF DESIGN VARIABLES (LOC)
+	int nGlobalDesignVar = DperE*NbTriangles ; // NUMBER OF DESIGN VARIABLES (GLOB)
+	real b,a0;
+	int[int] nmiter(4);
+	real[int, int] Npack(n, 9),Mpack(m,4),dfdx(n,m),dfdx2(n,m),NpackO(n,7),MpackO(m,4);
+	real[int] xmma(n),xval(n),xmin(n),xmax(n),xold1(n),xold2(n),df0dx(n),df0dx2(n),low(n),upp(n),fval(m),a(m),c(m),d(m);
+	real[int] Oxval(n),Oxmin(n),Oxmax(n),Oxold1(n),Oxold2(n),Odf0dx(n),Odf0dx2(n),Olow(n),Oupp(n),ZemmZetmma(2);
+	a0 = 1.0; d = 10.0;  a = 0.0;  c = 1000.0;
+	NpackO = 0;
+	MpackO = 0;
+	Npack = 100;
+	nmiter(0) = n;
+	nmiter(1) = m;
+	nmiter(3) = nGlobalDesignVar;
+	low=0.0;upp=100.0;
+	ZemmZetmma(0)=0;
+	ZemmZetmma(1)=0;
+	int[int,int] Idc(DperE,rho1No.n);
+	for (int i=0;i<DperE;i++) {
+		int stI=i*rho1No.n;
+		int enI=(i+1)*rho1No.n-1;
+		Idc(i,:)=(stI:1:enI);
+	}
+	xold1(Idc(0,:))=rho1No[];
+	xold2(Idc(0,:))=rho1No[];
+	xold1(Idc(1,:))=rho2No[];
+	xold2(Idc(1,:))=rho2No[];
+
+	rho1Old1No = rho1No;
+	rho2Old1No = rho2No;
+	rho1Old2No = rho1Old1No;
+	rho2Old2No = rho2Old1No;
+
+// INITIALIZE ITERATION
+	move1 = 0.05; move2 = 0.05;
+	int iter = 700;
+	int loop = 0;
+	int final = 0;
+	int[int] Order3 = [0,0,0];
+	real Afactor = 1.0;
+	real cf = 0.00;
+	int HMincrease = 10;
+
+// DETERMINE FILTER RADIUS & PROJECTION
+	real R = 0.001;//(Rmax+Rmin)/2.0; 	// average element size
+	real r2 = 2.5*R/(2.0*sqrt(3.0));
+	real r1 = 2.0*r2;
+
+	real Eta = 0.5;
+	real betalim = (2.5*R)/(R*sqrt(3.0));
+	real beta1 = 0.1;
+	real beta2 = 0.5*beta1;
+
+	real gamma = (betalim/beta1)^(1.0/((iter/20.0)-1.0));
+	real gammaEB = (4.0/betaEB)^(1.0/((iter/20.0)-1.0));
+
+// ESTABLISH 'A' MATRICIES FOR HELMHOLTZ FILTERING VARIATIONAL
+	r = r1;
+	Afilt1 = HelmholtzRho(Gamma1, Gamma1);
+	set(Afilt1, sparams = "-pc_type gamg -ksp_type gmres -ksp_max_it 200 -pc_gamg_threshold 0.001"); // -ksp_converged_reason -ksp_view_final_residual"); // SET PROPERTIES OF SOLVER
+
+	r = r2;
+	Afilt2 = HelmholtzRho(Gamma1, Gamma1);
+	set(Afilt2, sparams = "-pc_type gamg -ksp_type gmres -ksp_max_it 200 -pc_gamg_threshold 0.001"); //  -ksp_converged_reason -ksp_view_final_residual"); // SET PROPERTIES OF SOLVER
+
+while (loop <= (iter) ) {
+	loop++;
+	if (mpirank == 0) {
+		cout << endl;
+		cout << "------------------------- ITERATION  " << loop << " -------------------------" << endl;
+		cout << "Beta max = " << betalim << "     Current Beta = " << beta1 << endl;
+
+		real totalload = int2d(OmegaGlobal, 3)(traction);
+		cout << "Load = " << totalload << endl;
+	}
+	real t0 = mpiWtime();
+
+	// FIRST FILTER & PROJECTION - DENSITY
+		real[int] Rho1rhs(nbvertices);
+		real[int] Rho2rhs(nbvertices);
+		Rho1rhs = T*rho1[];		Rho2rhs = T*rho2[];
+		Gamma1 rho1i, rho2i;
+		rho1i[] = Afilt1^-1 * Rho1rhs; // LOCAL P1 OVERLAP SOLUTION
+		rho2i[] = Afilt1^-1 * Rho2rhs;
+
+		desV1 = -rho1i;	desV2 = -rho2i;
+		exchange(Afilt1, desV1[], scaled = true);
+		exchange(Afilt1, desV2[], scaled = true);
+
+		rho1Tilde1 = desV1; // INTERPOLATE LOCAL P1 TO P0
+		rho2Tilde1 = desV2;
+		exchange(A0, rho1Tilde1[], scaled = true);
+		exchange(A0, rho2Tilde1[], scaled = true);
+
+		// PROJECTION ON FILTERED DENSITIES
+			rho1 = (tanh(beta1*Eta) + tanh(beta1*(rho1Tilde1 - Eta))) / (tanh(beta1*Eta) + tanh(beta1*(1.0 - Eta)));
+			rho2 = (tanh(beta1*Eta) + tanh(beta1*(rho2Tilde1 - Eta))) / (tanh(beta1*Eta) + tanh(beta1*(1.0 - Eta)));
+
+	// SECOND FILTER & PROJECTION - DENSITY
+		Rho1rhs = T*rho1[];		Rho2rhs = T*rho2[];
+		rho1i[] = Afilt2^-1 * Rho1rhs;
+		rho2i[] = Afilt2^-1 * Rho2rhs;
+
+		desV1 = -rho1i;	desV2 = -rho2i;
+		exchange(Afilt2, desV1[], scaled = true);
+		exchange(Afilt2, desV2[], scaled = true);
+
+		rho1Tilde2 = desV1;
+		rho2Tilde2 = desV2;
+		exchange(A0, rho1Tilde2[], scaled = true);
+		exchange(A0, rho2Tilde2[], scaled = true);
+
+		// PROJECTION ON FILTERED DENSITIES
+			rhoPhys1O = (tanh(beta2*Eta) + tanh(beta2*(rho1Tilde2 - Eta))) / (tanh(beta2*Eta) + tanh(beta2*(1 - Eta)));
+			rhoPhys2O = (tanh(beta2*Eta) + tanh(beta2*(rho2Tilde2 - Eta))) / (tanh(beta2*Eta) + tanh(beta2*(1 - Eta)));
+
+		rhoPhys1O = max(0.001, min(rhoPhys1O, 1.0));
+		rhoPhys2O = max(0.001, min(rhoPhys2O, 1.0));
+
+	// MATERIAL MIXTURE PENALTY
+	 	if (cf < 0.5){
+			cf = 0.002*loop;
+		}
+
+		rhoPhyss = rhoPhys1O;	rhoPhyss2 = rhoPhys2O;
+		rhoPhyss[] .*= A0.D;	rhoPhyss2[] .*= A0.D;
+		locVol = int3d(Omega)(rhoPhyss*rhoPhyss2*(1.0-rhoPhyss2));
+		f2 = 0.;
+		mpiAllReduce(locVol, f2, mpiCommWorld, mpiSUM);
+
+		if (loop == 1) real f20 = f2;
+
+		f2 = (cf/f20)*f2;
+
+	// MATERIAL INTERPOLATION
+		if (method == 1){
+			// SIMP
+			eta1EO = rhoPhys1O^penal;
+			eta1BO = eta1EO;
+			etaFO = rhoPhys1O^penalS;
+
+			deta1EO = penal*rhoPhys1O^(penal-1.0);
+			deta1BO = deta1EO;
+			detaFO = penalS*rhoPhys1O^(penalS-1.0);
+		}
+		else {
+			// RAMP
+			qE1 = min(q0E1, (q0E1/HMincrease)+(q0E1/HMincrease)*(loop-1));
+			qB1 = min(q0B1, (q0B1/HMincrease)+(q0B1/HMincrease)*(loop-1));
+			qF = max(q0F, (q0F/HMincrease)+(q0F/HMincrease)*(loop-1));
+			qE1 = q0E1;
+			qB1 = q0B1;
+			if (mpirank == 0) {
+				cout << "----- RAMP -----" << endl;
+				cout << "qE1 = " << qE1 << endl;
+				cout << "qB1 = " << qB1 << endl;
+				cout << "qF = " << qF << endl;
+			}
+			eta1EO = rhoPhys1O/(1.0+qE1*(1.0-rhoPhys1O));
+			eta1BO = rhoPhys1O/(1.0+qB1*(1.0-rhoPhys1O));
+			etaFO = rhoPhys1O/(1.0+qF*(1.0-rhoPhys1O));
+
+			deta1EO = (1.0+qE1)/(1.0+qE1*(1.0-rhoPhys1O))^2.0;
+			deta1BO = (1.0+qB1)/(1.0+qB1*(1.0-rhoPhys1O))^2.0;
+			detaFO = (1.0+qF)/(1.0+qF*(1.0-rhoPhys1O))^2.0;
+		}
+
+		EbarO = Emin+(Emax-Emin)*((tanh(betaEB*etaEB) + tanh(betaEB*(rhoPhys2O - etaEB))) / (tanh(betaEB*etaEB) + tanh(betaEB*(1.0-etaEB))));
+		BbarO = Bmin+(Bmax-Bmin)*((tanh(betaEB*etaEB) + tanh(betaEB*(rhoPhys2O - etaEB))) / (tanh(betaEB*etaEB) + tanh(betaEB*(1.0-etaEB))));
+
+		stressAO = 4.956e1 - 6.309e-1*100.0*(1.0-rhoPhys2O) + 4.924e-3*(100.0*(1.0-rhoPhys2O))^2.0;
+		stressAO = stressAO * 6.895e6; // CONVERT TO Pa
+
+		dEbarO = (Emax-Emin)*(betaEB/(cosh(betaEB*(rhoPhys2O-etaEB))^2.0 *(tanh(betaEB*etaEB) + tanh(betaEB-betaEB*etaEB))));
+		dBbarO = (Bmax-Bmin)*(betaEB/(cosh(betaEB*(rhoPhys2O-etaEB))^2.0 *(tanh(betaEB*etaEB) + tanh(betaEB-betaEB*etaEB))));
+
+		dstressAO = 63.09 - 98.48*(1.0-rhoPhys2O);
+		dstressAO = dstressAO * 6.895e6;
+
+		E1OO = deta1EO*EbarO;
+		B1OO = deta1BO*BbarO;
+		E2OO = eta1EO*dEbarO;
+		B2OO = eta1BO*dBbarO;
+
+	// FINITE ELEMENT
+		if(mpirank==0) cout << "----- ELASTICITY -----" << endl;
+		EOO = eta1EO*EbarO;
+		BOO = eta1BO*BbarO;
+		E = EOO + Emin*1.0e-9; 	B = BOO + Bmin*1.0e-9;
+
+		AFEA = FE(Gamma111, Gamma111, tgv = -2);
+		Gamma111<real> def3(Rb)[6];
+		[Rb[0], Rby[0], Rbz[0]] = [1, 0, 0];
+		[Rb[1], Rby[1], Rbz[1]] = [0, 1, 0];
+		[Rb[2], Rby[2], Rbz[2]] = [0, 0, 1];
+		[Rb[3], Rby[3], Rbz[3]] = [y, -x, 0];
+		[Rb[4], Rby[4], Rbz[4]] = [-z, 0, x];
+		[Rb[5], Rby[5], Rbz[5]] = [0, z, -y];
+		set(AFEA, sparams = "-pc_type gamg -pc_gamg_threshold 0.001 -ksp_gmres -ksp_max_it 200 -ksp_rtol 1e-12 -ksp_pc_side right", nearnullspace = Rb, bs = 3); // -ksp_converged_reason -ksp_view_final_residual
+
+		real[int] FErhs = FE(0, Gamma111, tgv = -2); //tgv = -2 INDICATES SYMMETRIC ELIMNATION ASSOCIATED WITH HOMOGENOUS DIRICHLET BC
+		Gamma111 def3(ui); // LOCAL SOLUTION
+		ui[] = AFEA^-1 * FErhs;
+
+		ux = -ui; uy = -uiy; uz = -uiz;
+		exchange(AFEA, ux[], scaled = true);
+		exchange(AFEA, uy[], scaled = true);
+		exchange(AFEA, uz[], scaled = true);
+
+		if(mpirank == 0){
+			cout << "Max ux = " << (ux[].max)*1e3 << "mm     Min ux = " << (ux[].min)*1e3 << "mm" << endl;
+			cout << "Max uy = " << (uy[].max)*1e3 << "mm     Min uy = " << (uy[].min)*1e3 << "mm" << endl;
+			cout << "Max uz = " << (uz[].max)*1e3 << "mm     Min uz = " << (uz[].min)*1e3 << "mm" << endl;
+		}
+
+		exOO = dx(ux);
+		eyOO = dy(uy);
+		ezOO = dz(uz);
+		ezyOO = dz(uy) + dy(uz);
+		exzOO = dz(ux) + dx(uz);
+		exyOO = dy(ux) + dx(uy);
+
+		exchange(A0, exOO[], scaled = true);
+		exchange(A0, eyOO[], scaled = true);
+		exchange(A0, ezOO[], scaled = true);
+		exchange(A0, ezyOO[], scaled = true);
+		exchange(A0, exzOO[], scaled = true);
+		exchange(A0, exyOO[], scaled = true);
+
+	// VOLUME
+		rhoPhyss = rhoPhys1O; // LOCAL VARIABLE FOR SCALED DENSITIES ON OVERLAP MESH
+		rhoPhyss[] .*= A0.D; // DATA SCALED ON OVERLAP MESH
+		locVol = int3d(Omega)(rhoPhyss);
+		VolO = 0.;
+		mpiAllReduce(locVol, VolO, mpiCommWorld, mpiSUM);
+		VolO = VolO/TotVol;
+		if(mpirank == 0) cout << "Volume Fraction O = " << VolO << endl;
+		if(loop == 1) real Vol0 = VolO;
+
+	// COMPLIANCE
+		CE = Epsilon(exOO,eyOO,ezOO,ezyOO,exzOO,exyOO)' * C(EOO,nu) * Epsilon(exOO,eyOO,ezOO,ezyOO,exzOO,exyOO);
+		CE[] .*= A0.D;
+		SEloc = int3d(Omega)(CE);
+		SEOO = 0.;
+		mpiAllReduce(SEloc, SEOO, mpiCommWorld, mpiSUM);
+		if(mpirank == 0) cout << "SE = " << SEOO << endl;
+		if(loop == 1) real SE0 = SEOO;
+
+	// STRESS ANALYSIS
+		stressXXOO = C(EbarO,nu)[0]'*Epsilon(exOO,eyOO,ezOO,ezyOO,exzOO,exyOO) - dTemp*C(BbarO,nu)[0]'*phi;
+		stressYYOO = C(EbarO,nu)[1]'*Epsilon(exOO,eyOO,ezOO,ezyOO,exzOO,exyOO) - dTemp*C(BbarO,nu)[1]'*phi;
+		stressZZOO = C(EbarO,nu)[2]'*Epsilon(exOO,eyOO,ezOO,ezyOO,exzOO,exyOO) - dTemp*C(BbarO,nu)[2]'*phi;
+		stressYZOO = C(EbarO,nu)[3]'*Epsilon(exOO,eyOO,ezOO,ezyOO,exzOO,exyOO) - dTemp*C(BbarO,nu)[3]'*phi;
+		stressZXOO = C(EbarO,nu)[4]'*Epsilon(exOO,eyOO,ezOO,ezyOO,exzOO,exyOO) - dTemp*C(BbarO,nu)[4]'*phi;
+		stressXYOO = C(EbarO,nu)[5]'*Epsilon(exOO,eyOO,ezOO,ezyOO,exzOO,exyOO) - dTemp*C(BbarO,nu)[5]'*phi;
+		VMstressOO = sqrt( ( (stressXXOO - stressYYOO)^2.0 + (stressYYOO - stressZZOO)^2.0 + (stressZZOO - stressXXOO)^2.0 + 6*(stressXYOO^2.0 + stressYZOO^2.0 + stressZXOO^2.0) )/2.0 + (1.0e-4)^2.0);
+
+		RelaxedStressOO = etaFO*VMstressOO;
+		FailureIndexOO = RelaxedStressOO/stressAO;
+
+		// REDUCE STRESS CONCENTRATION IN REGION 2 WHERE LOAD IS APPLIED (SOLID SS)
+		FailureIndexOO =  FailureIndexOO - (region == 2)*(FailureIndexOO - 0.8);
+
+		maxFI = FailureIndexOO[].max;
+		mpiAllReduce(maxFI, MaxFailureOO, mpiCommWorld, mpiMAX);
+		if(mpirank==0) cout << "Max FailureIndex OO = " << MaxFailureOO << endl;
+
+	// SAVE TOPOLOGY
+		exchange(A0, rhoPhys1O[], scaled = true);
+		exchange(A0, rhoPhys2O[], scaled = true);
+		exchange(A0, FailureIndexOO[], scaled = true);
+
+		savevtk("3DMultiNEW_Stress_Deterministic.vtu", Omega, rhoPhys1O, rhoPhys2O, FailureIndexOO, dataname = "x1 x2 FailureIndex", order = Order3);
+		//savevtk("3DMultiNEW_Stress_Deterministic_Mat1OO.vtu", Omega, rhoPhys1O*rhoPhys2O, FailureIndexOO, dataname = "mat1OO failureOO", order = Order2);
+		//savevtk("3DMultiNEW_Stress_Deterministic_Mat2OO.vtu", Omega, rhoPhys1O*(1.0-rhoPhys2O), FailureIndexOO, dataname = "mat2OO failureOO", order = Order2);
+
+		if(mpirank == 0){
+			{
+				ofstream file("3DMultiNEW_Stress_Obj_Deterministic.txt", append);
+				file << loop << "   " << VolO << "   " << SEOO << "   " << MaxFailureOO;
+			}
+		}
+
+	// SENSITIVITY OF OBJECTIVE FUNCTION
+			dSE1OO = ( -(Epsilon(exOO,eyOO,ezOO,ezyOO,exzOO,exyOO)'*C(E1OO,nu)*Epsilon(exOO,eyOO,ezOO,ezyOO,exzOO,exyOO)) + (2.0*Epsilon(exOO,eyOO,ezOO,ezyOO,exzOO,exyOO)'*C(B1OO,nu)*phi*dTemp))/SE0  + (cf/f20)*(rhoPhys2O*(1.0-rhoPhys2O));
+	        dSE1OO = dSE1OO * ( beta2/(cosh(beta2*(rho1Tilde2 - Eta))^2.0 *(tanh(beta2*Eta) + tanh(beta2 - beta2*Eta))) );
+
+			dSE2OO = ( -(Epsilon(exOO,eyOO,ezOO,ezyOO,exzOO,exyOO)'*C(E2OO,nu)*Epsilon(exOO,eyOO,ezOO,ezyOO,exzOO,exyOO)) + (2.0*Epsilon(exOO,eyOO,ezOO,ezyOO,exzOO,exyOO)'*C(B2OO,nu)*phi*dTemp))/SE0 + (cf/f20)*(rhoPhys1O-2.0*rhoPhys1O*rhoPhys2O);
+	        dSE2OO = dSE2OO * ( beta2/(cosh(beta2*(rho2Tilde2 - Eta))^2.0 *(tanh(beta2*Eta) + tanh(beta2 - beta2*Eta))) );
+
+	// FILTER & PROJECTION - OBJECTIVE SENSITIVITY
+		real[int] SE1rhs(nbvertices);
+		real[int] SE2rhs(nbvertices);
+		SE1rhs = T*dSE1OO[];		SE2rhs = T*dSE2OO[];
+		Gamma1 dse1i, dse2i;
+		dse1i[] = Afilt2^-1 * SE1rhs;
+		dse2i[] = Afilt2^-1 * SE2rhs;
+
+		dse1 = -dse1i;	dse2 = -dse2i;
+		exchange(Afilt2, dse1[], scaled = true);
+		exchange(Afilt2, dse2[], scaled = true);
+
+		// INTERPOLATE FROM P1 TO P0 "MANUALLY"
+		dSE1[] = TT*dse1[];
+		dSE2[] = TT*dse2[];
+		exchange(A0, dSE1[], scaled = true);
+		exchange(A0, dSE2[], scaled = true);
+
+		// PROJECTION SENSITIVITY
+			dSE1 = dSE1 * ( beta1/(cosh(beta1*(rho1Tilde1 - Eta))^2.0 *(tanh(beta1*Eta) + tanh(beta1 - beta1*Eta))) );
+			dSE2 = dSE2 * ( beta1/(cosh(beta1*(rho2Tilde1 - Eta))^2.0 *(tanh(beta1*Eta) + tanh(beta1 - beta1*Eta))) );
+
+	// FILTER AGAIN - COMPLIANCE SENSITIVITY
+		SE1rhs = TnoA*dSE1[];		SE2rhs = TnoA*dSE2[];
+		dse1i[] = Afilt1^-1 * SE1rhs;
+		dse2i[] = Afilt1^-1 * SE2rhs;
+
+		dse1 = -dse1i;	dse2 = -dse2i;
+		exchange(Afilt1, dse1[], scaled = true);
+		exchange(Afilt1, dse2[], scaled = true);
+
+		// INTERPOLATE FROM P1 TO P0 "MANUALLY"
+		dSE1[] = TT*dse1[];
+		dSE2[] = TT*dse2[];
+		exchange(A0, dSE1[], scaled = true);
+		exchange(A0, dSE2[], scaled = true);
+
+		df0dx1No[] = dSE1[](overlapRestP0);
+		df0dx2No[] = dSE2[](overlapRestP0);
+
+	// SENSITIVITY OF VOLUME
+		dM1OO = (1.0/TotVol) * ( beta2/(cosh(beta2*(rho1Tilde2 - Eta))^2.0 *(tanh(beta2*Eta) + tanh(beta2 - beta2*Eta))) );
+		dM2OO = 0.0;
+
+	// FILTER & PROJECTION - VOLUME SENSITIVITY
+		real[int] M1rhs(nbvertices);
+		real[int] M2rhs(nbvertices);
+		M1rhs = T*dM1OO[];		M2rhs = T*dM2OO[];
+		Gamma1 dm1i, dm2i;
+		dm1i[] = Afilt2^-1 * M1rhs;
+		dm2i[] = Afilt2^-1 * M2rhs;
+
+		dm1 = -dm1i;	dm2 = -dm2i;
+		exchange(Afilt2, dm1[], scaled = true);
+		exchange(Afilt2, dm2[], scaled = true);
+
+		// INTERPOLATE FROM P1 TO P0 "MANUALLY"
+		dM1[] = TT*dm1[];
+		dM2[] = TT*dm2[];
+		exchange(A0, dM1[], scaled = true);
+		exchange(A0, dM2[], scaled = true);
+
+		// PROJECTION SENSITIVITY
+			dM1 = dM1 * ( beta1/(cosh(beta1*(rho1Tilde1 - Eta))^2.0 *(tanh(beta1*Eta) + tanh(beta1 - beta1*Eta))) );
+			dM2 = dM2 * ( beta1/(cosh(beta1*(rho2Tilde1 - Eta))^2.0 *(tanh(beta1*Eta) + tanh(beta1 - beta1*Eta))) );
+
+	// FILTER AGAIN - COMPLIANCE SENSITIVITY
+		M1rhs = TnoA*dM1[];		M2rhs = TnoA*dM2[];
+		dm1i[] = Afilt1^-1 * M1rhs;
+		dm2i[] = Afilt1^-1 * M2rhs;
+
+		dm1 = -dm1i;	dm2 = -dm2i;
+		exchange(Afilt1, dm1[], scaled = true);
+		exchange(Afilt1, dm2[], scaled = true);
+
+		// INTERPOLATE FROM P1 TO P0 "MANUALLY"
+		dM1[] = TT*dm1[];
+		dM2[] = TT*dm2[];
+		exchange(A0, dM1[], scaled = true);
+		exchange(A0, dM2[], scaled = true);
+
+	// SENSITIVITY OF VOLUME CONSTRAINTS
+		dM1 = dM1/Vup;
+		dfdx1NoVup[] = dM1[](overlapRestP0);
+		dfdx2NoVup[] = dM2[](overlapRestP0);
+
+		dM1[] = TT*dm1[];
+		exchange(A0, dM1[], scaled = true);
+		dM1 = - (dM1/Vlow);
+		dfdx1NoVlow[] = dM1[](overlapRestP0);
+		dfdx2NoVlow[] = dM2[](overlapRestP0);
+
+	// STRESS CONSTRAINT
+		FI = FailureIndexOO;
+		FI[] .*= A0.D;
+		locPN = int3d(Omega)(FI^p);
+		PNormOO = 0.;
+		mpiAllReduce(locPN, PNormOO, mpiCommWorld, mpiSUM);
+		PNormOO = (valN * PNormOO )^(1.0/p);
+
+		// P-NORM ADAPTIVE SCALING FACTOR
+		if (mpirank == 0){
+			if (loop>1){
+				if ( loop>3 && ((sOld1OO - sOld2OO)*(sOld2OO - sOld3OO)) < 0.0 ){
+					Afactor = 0.5;
+				}
+				else {
+					Afactor = 1.0;
+				}
+				 sOO = Afactor*(MaxFailureOldOO/PNormOldOO) + (1.0-Afactor)*sOld1OO;
+			}
+		}
+		broadcast(processor(0), sOO);
+
+		PNormScaledOO = sOO*PNormOO;
+		sOld3OO = sOld2OO;
+		sOld2OO = sOld1OO;
+		sOld1OO = sOO;
+		PNormOldOO = PNormOO;
+		MaxFailureOldOO = MaxFailureOO;
+		//if(mpirank==0) cout << "Scaled P-NORM OO = " << PNormScaledOO << "     Max FailureIndex OO = " << MaxFailureOO << endl;
+
+		// SOLVE LAMBDA FOR ADJOINT SENSITIVITY
+			real[int] Lrhs = PNormLambdaOO(0, Gamma111, tgv = -2); //tgv = -2 INDICATES SYMMETRIC ELIMNATION ASSOCIATED WITH HOMOGENOUS DIRICHLET BC
+			Gamma111 def3(lambi); // LOCAL SOLUTION
+			lambi[] = AFEA^-1 * Lrhs;
+
+			lambdax = -lambi; lambday = -lambiy; lambdaz = -lambiz;
+			exchange(AFEA, lambdax[], scaled = true);
+			exchange(AFEA, lambday[], scaled = true);
+			exchange(AFEA, lambdaz[], scaled = true);
+
+			lxOO = dx(lambdax);
+			lyOO = dy(lambday);
+			lzOO = dz(lambdaz);
+			lzyOO = dz(lambday) + dy(lambdaz);
+			lxzOO = dz(lambdax) + dx(lambdaz);
+			lxyOO = dy(lambdax) + dx(lambday);
+
+			exchange(A0, lxOO[], scaled = true);
+			exchange(A0, lyOO[], scaled = true);
+			exchange(A0, lzOO[], scaled = true);
+			exchange(A0, lzyOO[], scaled = true);
+			exchange(A0, lxzOO[], scaled = true);
+			exchange(A0, lxyOO[], scaled = true);
+
+		// SENSITIVITY OF PNORM
+			dPNorm1OO = (valN/stressAO) * VMstressOO * PNormOO^(1.0-p) * FailureIndexOO^(p-1.0) * detaFO
+					+ Epsilon(lxOO,lyOO,lzOO,lzyOO,lxzOO,lxyOO)' * C(E1OO,nu) * Epsilon(exOO,eyOO,ezOO,ezyOO,exzOO,exyOO)
+					- Epsilon(lxOO,lyOO,lzOO,lzyOO,lxzOO,lxyOO)' * C(B1OO,nu) * dTemp * phi;
+			dPNorm1OO = dPNorm1OO * ( beta2/(cosh(beta2*(rho1Tilde2 - Eta))^2.0 *(tanh(beta2*Eta) + tanh(beta2 - beta2*Eta))) );
+
+			dPNorm2OO = (valN/stressAO) * etaFO * PNormOO^(1.0-p) * FailureIndexOO^(p-1.0) * dVMdSig(stressXXOO,stressYYOO,stressZZOO,stressYZOO,stressZXOO,stressXYOO)' * (C(dEbarO,nu)*Epsilon(exOO,eyOO,ezOO,ezyOO,exzOO,exyOO) - C(dBbarO,nu)*dTemp*phi)
+					- dstressAO * (valN/stressAO) * PNormOO^(1.0-p) * FailureIndexOO^p
+					+ Epsilon(lxOO,lyOO,lzOO,lzyOO,lxzOO,lxyOO)' * C(E2OO,nu) * Epsilon(exOO,eyOO,ezOO,ezyOO,exzOO,exyOO)
+					- Epsilon(lxOO,lyOO,lzOO,lzyOO,lxzOO,lxyOO)' * C(B2OO,nu) * dTemp * phi;
+			dPNorm2OO = dPNorm2OO * ( beta2/(cosh(beta2*(rho2Tilde2 - Eta))^2.0 *(tanh(beta2*Eta) + tanh(beta2 - beta2*Eta))) );
+
+		// FILTER & PROJECTION
+			real[int] P1rhs(nbvertices);
+			real[int] P2rhs(nbvertices);
+			P1rhs = T*dPNorm1OO[];		P2rhs = T*dPNorm2OO[];
+			Gamma1 dpnorm1i, dpnorm2i;
+			dpnorm1i[] = Afilt2^-1 * P1rhs;
+			dpnorm2i[] = Afilt2^-1 * P2rhs;
+
+			dpnorm1 = -dpnorm1i;	dpnorm2 = -dpnorm2i;
+			exchange(Afilt2, dpnorm1[], scaled = true);
+			exchange(Afilt2, dpnorm2[], scaled = true);
+
+			// INTERPOLATE FROM P1 TO P0 "MANUALLY"
+			dPnorm1[] = TT*dpnorm1[];
+			dPnorm2[] = TT*dpnorm2[];
+			exchange(A0, dPnorm1[], scaled = true);
+			exchange(A0, dPnorm2[], scaled = true);
+
+			// PROJECTION SENSITIVITY
+				dPnorm1 = dPnorm1 * ( beta1/(cosh(beta1*(rho1Tilde1 - Eta))^2.0 *(tanh(beta1*Eta) + tanh(beta1 - beta1*Eta))) );
+				dPnorm2 = dPnorm2 * ( beta1/(cosh(beta1*(rho2Tilde1 - Eta))^2.0 *(tanh(beta1*Eta) + tanh(beta1 - beta1*Eta))) );
+
+		// FILTER AGAIN - COMPLIANCE SENSITIVITY
+			P1rhs = TnoA*dPnorm1[];		P2rhs = TnoA*dPnorm2[];
+			dpnorm1i[] = Afilt1^-1 * P1rhs;
+			dpnorm2i[] = Afilt1^-1 * P2rhs;
+
+			dpnorm1 = -dpnorm1i;	dpnorm2 = -dpnorm2i;
+			exchange(Afilt1, dpnorm1[], scaled = true);
+			exchange(Afilt1, dpnorm2[], scaled = true);
+
+			// INTERPOLATE FROM P1 TO P0 "MANUALLY"
+			dPnorm1[] = TT*dpnorm1[];
+			dPnorm2[] = TT*dpnorm2[];
+			exchange(A0, dPnorm1[], scaled = true);
+			exchange(A0, dPnorm2[], scaled = true);
+
+			dPnorm1 = dPnorm1*sOO;
+			dPnorm2 = dPnorm2*sOO;
+			dfdx1NoOO[] = dPnorm1[](overlapRestP0); // OVERLAP P0 TO NON-OVERLAP P0
+			dfdx2NoOO[] = dPnorm2[](overlapRestP0);
+
+		// FOR MMA
+			fval(0) = VolO/Vup - 1.0;
+			fval(2) = 1.0 - VolO/Vlow;
+			fval(1) = (PNormScaledOO - 1.0);
+
+			dfdx(0:(n/2-1), 0) = dfdx1NoVup[];
+			dfdx((n/2):(n-1), 0) = dfdx2NoVup[];
+
+			dfdx(0:(n/2-1), 2) = dfdx1NoVlow[];
+			dfdx((n/2):(n-1), 2) = dfdx2NoVlow[];
+
+			dfdx(0:(n/2-1), 1) = dfdx1NoOO[];
+			dfdx((n/2):(n-1), 1) = dfdx2NoOO[];
+
+			if(mpirank == 0){
+				{
+					ofstream file("3DMultiNEW_Stress_Obj_Deterministic.txt", append);
+					file << "   " << fval(0) << "   " << fval(1) << "   " << fval(2) << endl;
+				}
+			}
+
+	// RUN MMA
+		if(mpirank == 0) cout << "----- MMA -----" << endl;
+		nmiter(2)=loop;
+
+		xval(Idc(0,:)) = rho1No[];
+		xval(Idc(1,:)) = rho2No[];
+
+		if (loop >= 3 && loop % 20 != 1){
+			osc1t = ( (rho1No - rho1Old1No) * (rho1Old1No - rho1Old2No) ) <= 0.0 ;
+			osc2t = ( (rho2No - rho2Old1No) * (rho2Old1No - rho1Old2No) ) <= 0.0 ;
+			osc1f = ( (rho1No - rho1Old1No) * (rho1Old1No - rho1Old2No) ) > 0.0 ;
+			osc2f = ( (rho2No - rho2Old1No) * (rho2Old1No - rho1Old2No) ) > 0.0 ;
+
+			move1 = 0.7*move1*osc1t + 1.1*move1*osc1f;
+			move2 = 0.7*move2*osc2t + 1.1*move2*osc2f;
+
+			move1 = 0.01*(move1<0.01) + 0.5*(move1>0.5) + move1*(move1>=0.01 && move1<=0.5);
+			move2 = 0.01*(move2<0.01) + 0.5*(move2>0.5) + move2*(move2>=0.01 && move2<=0.5);
+		}
+
+		if(mpirank == 0) cout << "Max move1: " << move1[].max << "     Max move2: " << move2[].max << endl;
+
+		m1minmoveNo = max(1e-6,rho1No-move1);
+		m2minmoveNo = max(1e-6,rho2No-move2);
+		m1maxmoveNo = min(1.0,rho1No+move1);
+		m2maxmoveNo = min(1.0,rho2No+move2);
+
+		xmin(Idc(0,:)) = m1minmoveNo[];
+		xmin(Idc(1,:)) = m2minmoveNo[];
+		xmax(Idc(0,:)) = m1maxmoveNo[];
+		xmax(Idc(1,:)) = m2maxmoveNo[];
+
+		df0dx(Idc(0,:)) = df0dx1No[];
+		df0dx(Idc(1,:)) = df0dx2No[];
+
+		df0dx2=0.*df0dx;
+
+		dfdx2 = 0.*dfdx;
+
+		Npack(0:n-1,0) = xval;
+		Npack(0:n-1,1) = xmin;
+		Npack(0:n-1,2) = xmax;
+		Npack(0:n-1,3) = xold1;
+		Npack(0:n-1,4) = xold2;
+		Npack(0:n-1,5) = df0dx;
+		Npack(0:n-1,6) = df0dx2;
+		Npack(0:n-1,7) = low;
+		Npack(0:n-1,8) = upp;
+		Mpack(0:m-1,0) = fval;
+		Mpack(0:m-1,1) = a;
+		Mpack(0:m-1,2) = c;
+		Mpack(0:m-1,3) = d;
+
+		MMAsubpetsc(nmiter,Npack,Mpack,dfdx,dfdx2,a0,NpackO,MpackO,ZemmZetmma,b);
+
+		low = NpackO(:,3);
+		upp = NpackO(:,4);
+		xold2 = xold1;
+		xold1 = xval;
+		xmma = NpackO(:,0);
+
+		rho1Old2No = rho1Old1No;
+		rho2Old2No = rho2Old1No;
+
+		rho1Old1No = rho1No;
+		rho2Old1No = rho2No;
+
+		rho1No[] = xmma(Idc(0,:));
+		rho2No[] = xmma(Idc(1,:));
+
+	rho1[](overlapRestP0) = rho1No[]; // NON-OVERLAP TO LOCAL OVERLAP
+	rho2[](overlapRestP0) = rho2No[];
+
+	exchange(A0, rho1[], scaled = true);
+	exchange(A0, rho2[], scaled = true);
+
+	// VOID DOMAIN EXTENSION
+		rho1 =  rho1 - (region == 3)*(rho1 - 1e-3);
+		rho1No =  rho1No - (region == 3)*(rho1No - 1e-3);
+	// SET NON-DESIGNABLE REGIONS - MAT 1
+		rho1 =  rho1 - (region == 2)*(rho1 - 1.0);
+		rho1No =  rho1No - (region == 2)*(rho1No - 1.0);
+		rho2 =  rho2 - (region == 2)*(rho2 - 1.0);
+		rho2No =  rho2No - (region == 2)*(rho2No - 1.0);
+
+	// UPDATE PROJECTION STRENGTH
+		if (loop % 20 == 0) {
+			move1 = 0.05; move2 = 0.05;
+
+			beta1 = min(beta1*gamma, betalim);
+			beta2 = 0.5*beta1;
+
+			betaEB = min(betaEB*gammaEB, 4.0);
+		}
+
+	real t1 = mpiWtime();
+	if(mpirank == 0) cout << "Total Iteration time: " << t1-t0 << endl;
+
+}
